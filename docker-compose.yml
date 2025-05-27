@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # Service untuk PostgreSQL
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: admin      # Username database
+      POSTGRES_PASSWORD: 1234   # Password database
+      POSTGRES_DB: userdb       # Nama database
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Simpan data secara persisten
+      - ./initdb:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"            # Port PostgreSQL
+
+  # Service untuk Express.js    
+  backend:
+    build: ./backend           # Build dari Dockerfile di folder backend
+    depends_on:
+      - db                     # Pastikan PostgreSQL jalan dulu
+    environment:
+      DB_HOST: db              # Gunakan nama service (db) sebagai host
+      DB_USER: admin
+      DB_PASSWORD: 1234
+      DB_NAME: userdb
+      DB_PORT: 5432
+    ports:
+      - "3000:3000"            # Port API Express
+    volumes:
+      - ./backend:/app         # Mount kode backend (untuk development)
+
+# Volume untuk PostgreSQL (agar data tidak hilang saat container di-restart)
+volumes:
+  postgres_data:
