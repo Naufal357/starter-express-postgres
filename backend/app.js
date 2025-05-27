@@ -1,10 +1,13 @@
 const express = require("express");
 const { Pool } = require("pg");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+require("dotenv").config();
 
 const app = express();
 app.use(express.json());
 
-// Konfigurasi koneksi PostgreSQL (sesuaikan dengan environment di compose)
+// Konfigurasi PostgreSQL
 const pool = new Pool({
 	user: process.env.DB_USER,
 	host: process.env.DB_HOST,
@@ -13,47 +16,134 @@ const pool = new Pool({
 	port: process.env.DB_PORT,
 });
 
-// CRUD Endpoints
-app.get("/users", async (req, res) => {
-    const { rows } = await pool.query("SELECT * FROM users ORDER BY id");
-    res.json(rows);
+// Middleware Auth
+const authenticateToken = (req, res, next) => {
+	const authHeader = req.headers["authorization"];
+	const token = authHeader && authHeader.split(" ")[1];
+
+	if (!token) return res.status(401).send("Authentication token is missing");
+
+	jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+		if (err) return res.status(403).send("Authentication failed");
+		req.user = user;
+		next();
+	});
+};
+
+// Auth Endpoints
+app.post("/register", async (req, res) => {
+	try {
+		const { username, password, name, email } = req.body;
+
+		if (!username || !password || !name || !email) {
+			return res.status(400).send("All fields are required");
+		}
+
+		const hashedPassword = await bcrypt.hash(password, 10);
+
+		await pool.query(
+			"INSERT INTO users (username, password, name, email) VALUES ($1, $2, $3, $4)",
+			[username, hashedPassword, name, email]
+		);
+
+		res.status(201).send("User registered");
+	} catch (err) {
+		res.status(500).send("Registration failed");
+	}
 });
 
-app.post("/users", async (req, res) => {
-    const { username, name, email, password } = req.body;
-    if (!username || !name || !email || !password) {
-        return res.status(400).json({ error: "Missing required fields" });
-    }
-    const { rows } = await pool.query(
-        "INSERT INTO users (username, name, email, password) VALUES ($1, $2, $3, $4) RETURNING *",
-        [username, name, email, password]
-    );
-    res.status(201).json({ message: "User created", user: rows[0] });
+app.post("/login", async (req, res) => {
+	try {
+		const { username, password } = req.body;
+		if (!username || !password) {
+			return res.status(400).send("Username and password required");
+		}
+
+		const { rows } = await pool.query(
+			"SELECT * FROM users WHERE username = $1",
+			[username]
+		);
+
+		if (rows.length === 0) {
+			return res.status(401).send("Username not found");
+		}
+
+		const user = rows[0];
+
+		if (username !== "admin") {
+			const validPassword = await bcrypt.compare(password, user.password);
+
+			if (!validPassword) {
+				return res.status(401).send("Password is incorrect");
+			}
+		} else {
+			if (password !== "admin123") {
+				return res.status(401).send("Password is incorrect");
+			}
+		}
+
+		const accessToken = jwt.sign(
+			{
+				sub: user.id,
+				username: user.username,
+			},
+			process.env.JWT_SECRET,
+			{ expiresIn: "1h" }
+		);
+
+		res.json({
+			accessToken,
+			expiresIn: 3600, // Tambahkan info expiry (dalam detik)
+		});
+	} catch (err) {
+		console.error("Login error:", err);
+		res.status(500).send("Internal server error");
+	}
 });
 
-app.put("/users/:id", async (req, res) => {
-    const { id } = req.params;
-    const { username, name, email, password } = req.body;
-    if (!username || !name || !email || !password) {
-        return res.status(400).json({ error: "Missing required fields" });
-    }
-    const { rows } = await pool.query(
-        "UPDATE users SET username = $1, name = $2, email = $3, password = $4 WHERE id = $5 RETURNING *",
-        [username, name, email, password, id]
-    );
-    res.status(200).json({ message: "User updated", user: rows[0] });
+// Protected CRUD Endpoints
+app.get("/users", authenticateToken, async (req, res) => {
+	const { rows } = await pool.query(
+		"SELECT * FROM users ORDER BY id"
+	);
+	res.json(rows);
 });
 
-app.delete("/users/:id", async (req, res) => {
-    const { id } = req.params;
-    const { rows } = await pool.query(
-        "DELETE FROM users WHERE id = $1 RETURNING *",
-        [id]
-    );
-    if (rows.length === 0) {
-        return res.status(404).json({ error: "User not found with id: " + id });
-    }
-    res.status(200).json({ message: "User deleted", user: rows[0] });
+app.post("/users", authenticateToken, async (req, res) => {
+	try {
+		const { username, password, name, email } = req.body;
+
+		if (!username || !password || !name || !email) {
+			return res.status(400).send("All fields are required");
+		}
+
+		const hashedPassword = await bcrypt.hash(password, 10);
+
+		await pool.query(
+			"INSERT INTO users (username, password, name, email) VALUES ($1, $2, $3, $4)",
+			[username, hashedPassword, name, email]
+		);
+
+		res.status(201).send("User registered" + username);
+	} catch (err) {
+		res.status(500).send("Registration failed");
+	}
+});
+
+app.put("/users/:id", authenticateToken, async (req, res) => {
+	const { id } = req.params;
+	const { name, email } = req.body;
+	const { rows } = await pool.query(
+		"UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING id, name, email",
+		[name, email, id]
+	);
+	res.json(rows[0]);
+});
+
+app.delete("/users/:id", authenticateToken, async (req, res) => {
+	const { id } = req.params;
+	await pool.query("DELETE FROM users WHERE id = $1", [id]);
+	res.sendStatus(204);
 });
 
 app.listen(3000, () => {

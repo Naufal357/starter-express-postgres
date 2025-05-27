@@ -20,6 +20,7 @@ services:
     depends_on:
       - db                     # Pastikan PostgreSQL jalan dulu
     environment:
+      JWT_SECRET: f2856d8f5c738ac4709f78a5c68f504d06ff9c4cce328770f6ed41cd69ab3e4b9d5b4d828e322fb145c999f16d7b6579  # Kunci JWT
       DB_HOST: db              # Gunakan nama service (db) sebagai host
       DB_USER: admin
       DB_PASSWORD: 1234
@@ -29,6 +30,7 @@ services:
       - "3000:3000"            # Port API Express
     volumes:
       - ./backend:/app         # Mount kode backend (untuk development)
+      - /app/node_modules      # Mount folder node_modules
 
 # Volume untuk PostgreSQL (agar data tidak hilang saat container di-restart)
 volumes:
