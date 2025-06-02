@@ -21,11 +21,11 @@ const createUser = async (req, res, next) => {
 
 		const hashedPassword = await bcrypt.hash(password, 10);
 		await pool.query(
-			"INSERT INTO users (username, password, name, email) VALUES ($1, $2, $3, $4)",
+			"INSERT INTO users (username, password, name, email, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
 			[username, hashedPassword, name, email]
 		);
 
-		res.status(201).send(`User registered ${username}`);
+		res.status(201).send(`User registered as ${username}`);
 	} catch (err) {
 		next(err);
 	}
@@ -34,12 +34,41 @@ const createUser = async (req, res, next) => {
 const updateUser = async (req, res, next) => {
 	try {
 		const { id } = req.params;
-		const { name, email } = req.body;
-		const { rows } = await pool.query(
-			"UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING id, name, email",
-			[name, email, id]
+		const { name, username, email, password, newPassword } = req.body;
+
+		if (!name || !username || !email || !password) {
+			return res.status(400).send("All fields are required");
+		}
+
+		const { rows } = await pool.query("SELECT * FROM users WHERE id = $1", [
+			id,
+		]);
+		const user = rows[0];
+
+		const validPassword = await bcrypt.compare(password, user.password);
+
+		if (!validPassword) {
+			return res.status(401).send("Password is incorrect");
+		}
+
+		if (newPassword) {
+			const hashedPassword = await bcrypt.hash(newPassword, 10);
+			await pool.query("UPDATE users SET password = $1 WHERE username = $2", [
+				hashedPassword,
+				username,
+			]);
+		}
+
+		await pool.query(
+			"UPDATE users SET name = $1, username = $2, email = $3, updated_at = NOW() WHERE id = $4",
+			[name, username, email, id]
 		);
-		res.json(rows[0]);
+
+		const updatedUser = await pool.query("SELECT * FROM users WHERE id = $1", [
+			id,
+		]);
+
+		res.json(updatedUser.rows[0]);
 	} catch (err) {
 		next(err);
 	}
